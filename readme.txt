@@ -16,7 +16,7 @@ FLAGS:
   --dbpath        SQLite database path
 
 OPTIONS:
-  --rawdata_dir   Path to .nm4 data files               [default=\":memory:\"]
+  --rawdata_dir   Path to .nm4 data files               [default=./]
   --start         Optionally skip the first N files     [default=0]
   --end           Optionally skip files after index N   [default=usize::MAX]
 
