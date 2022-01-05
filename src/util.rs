@@ -12,7 +12,7 @@ AISDB
   (message types 1, 2, 3, 5, 18, 24, 27)
 
 USAGE:
-  aisdb_bin --dbpath [DBPATH] [OPTIONS]
+  aisdb --dbpath [DBPATH] [OPTIONS]
 
 FLAGS:
   -h, --help      Prints this message

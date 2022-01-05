@@ -14,7 +14,7 @@ test = true
 doctest = false
 
 [[bin]]
-name = 'aisdb_bin'
+name = 'aisdb'
 path = 'src/bin.rs'
 doc = true
 test = false
