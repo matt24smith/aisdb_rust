@@ -3,3 +3,4 @@ target/**
 testdata
 testdata/**
 ais.db
+Cargo.lock
