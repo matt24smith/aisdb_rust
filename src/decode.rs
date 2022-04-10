@@ -50,7 +50,8 @@ impl VesselData {
 /// ("!AIVDM,1,1,,,144fiV0P00WT:`8POChN4?v4281b,0*64", 1635883083)
 /// ```
 pub fn parse_headers(line: Result<String, Error>) -> Option<(String, i32)> {
-    match line.unwrap().rsplit_once('\\')? {
+    //println!("{:?}", line.as_ref().unwrap().rsplit_once('\\'));
+    match line.as_ref().unwrap().rsplit_once('\\')? {
         (meta, payload) => {
             for tag_outer in meta.split(',') {
                 for tag in tag_outer.split('*') {
@@ -60,45 +61,65 @@ pub fn parse_headers(line: Result<String, Error>) -> Option<(String, i32)> {
                         return Some((payload.to_string(), i));
                     } else if let Ok(i) = tag[3..].parse::<i32>() {
                         return Some((payload.to_string(), i));
-                    } else {
-                        return None;
+                    } else if let Ok(i) = tag.split_once(' ').unwrap().0.parse::<u64>() {
+                        if 946731600 < i
+                            && i <= std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap()
+                                .as_secs()
+                        {
+                            return Some((payload.to_string(), i.try_into().unwrap()));
+                        } else {
+                            println!(
+                                "skipped- tag:{:?}\tmeta:{:?}\tpayload:{:?}",
+                                tag, meta, payload
+                            );
+                            return None;
+                        }
                     }
                 }
             }
-            None
+            let ii = meta.split_once(' ').unwrap().0.parse::<u64>().unwrap();
+
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+            if 946731600 < ii && ii <= now {
+                return Some((payload.to_string(), ii.try_into().unwrap()));
+            } else {
+                println!(
+                    "skipped- ii:{:?}\tmeta:{:?}\tpayload:{:?}",
+                    ii, meta, payload
+                );
+                return None;
+            }
         }
     }
 }
 
 /// workaround for panic from nmea_parser library,
 /// caused by malformed base station timestamps / binary application messages?
-/// discards all UTC date response and binary application payloads before
+/// discards UTC date response and binary application payloads before
 /// decoding them
 pub fn skipmsg(msg: &str, epoch: &i32) -> Option<(String, i32)> {
     //println!("{:?}", msg);
-    if &msg.chars().count() >= &15 && &msg[..12] == "!AIVDM,1,1,," {
-        match &msg[12..13] {
-            "0" | "1" | "2" | "3" | "A" | "B" => match &msg[14..15] {
-                ";" | "I" | "J" => None,
-                _ => {
-                    //println!("14..15: {:?}", &msg[14..15]);
-                    Some((msg.to_string(), *epoch))
-                }
-            },
-            "," => match &msg[13..14] {
-                ";" | "I" | "J" => None,
-                _ => {
-                    //println!("13..14: {:?}", &msg[13..14]);
-                    Some((msg.to_string(), *epoch))
-                }
-            },
-            _ => {
-                //println!("12..13: {:?}", &msg[12..13]);
-                Some((msg.to_string(), *epoch))
-            }
+    let cols: Vec<&str> = msg.split(',').collect();
+    if cols.len() < 6 {
+        return Some((msg.to_string(), *epoch));
+    }
+    let count = str::parse::<u8>(cols[1]).unwrap_or(1);
+    match (cols[0], count, cols[2], cols[3], cols[4], cols[5]) {
+        (prefix, c, _fragment_no, _seq_id, _channel, tx)
+            if &tx.chars().count() > &2
+                && (c == 1)
+                && (&tx[0..1] == ";" || &tx[0..1] == "I" || &tx[0..1] == "J")
+                && (prefix == "!AIVDM" || prefix == "!AIVDO") =>
+        {
+            //println!("skipped {:?}", msg);
+            None
         }
-    } else {
-        Some((msg.to_string(), *epoch))
+        _ => Some((msg.to_string(), *epoch)),
     }
 }
 
@@ -125,16 +146,25 @@ pub fn filter_vesseldata(
 pub async fn decode_insert_msgs(
     dbpath: &std::path::Path,
     filename: &std::path::Path,
-) -> Result<(), Error> {
-    let fstr = &filename.to_str().unwrap();
-    assert_eq!(&fstr[&fstr.len() - 4..], ".nm4");
+    mut parser: NmeaParser,
+) -> Result<NmeaParser, Error> {
+    //) -> Result<(), Error> {
+    //let fstr = &filename.to_str().unwrap();
+    //assert_eq!(&fstr[&fstr.len() - 4..], ".nm4");
+    match &filename.to_str().unwrap()[&filename.to_str().unwrap().len() - 3..] {
+        "nm4" | ".rx" => (),
+        _ => {
+            panic!("invalid file type! {:?}", &filename);
+        }
+    }
+
     let start = Instant::now();
 
     let reader = BufReader::new(
         File::open(filename)
             .unwrap_or_else(|_| panic!("Cannot open .nm4 file {}", filename.to_str().unwrap())),
     );
-    let mut parser = NmeaParser::new();
+    //let mut parser = NmeaParser::new();
     let mut stat_msgs = <Vec<VesselData>>::new();
     let mut positions = <Vec<VesselData>>::new();
     let mut count = 0;
@@ -182,21 +212,27 @@ pub async fn decode_insert_msgs(
     }
 
     let elapsed = start.elapsed();
-
-    println!(
-        "{}    count:{: >8}    elapsed: {:0.2 }s    rate: {:.0} msgs/s",
-        filename
-            .to_str()
-            .unwrap()
-            .rsplit_once(std::path::MAIN_SEPARATOR)
-            .unwrap()
-            .1,
-        count,
-        elapsed.as_secs_f32(),
-        count as f32 / elapsed.as_secs_f32(),
+    let fname = filename
+        .to_str()
+        .unwrap()
+        .rsplit_once(std::path::MAIN_SEPARATOR)
+        .unwrap()
+        .1;
+    let fname1 = format!("{:<1$}", fname, 64);
+    let elapsed1 = format!(
+        "elapsed: {:>1$}s",
+        format!("{:.2 }", elapsed.as_secs_f32()),
+        7
+    );
+    let rate1 = format!(
+        "rate: {:>1$} msgs/s",
+        format!("{:.0}", count as f32 / elapsed.as_secs_f32()),
+        8
     );
 
-    Ok(())
+    println!("{}count:{: >8}    {}    {}", fname1, count, elapsed1, rate1,);
+
+    Ok(parser)
 }
 
 /* --------------------------------------------------------------------------------------------- */
@@ -204,7 +240,7 @@ pub async fn decode_insert_msgs(
 #[cfg(test)]
 pub mod tests {
 
-    use super::{decode_insert_msgs, parse_headers};
+    use super::{decode_insert_msgs, parse_headers, NmeaParser};
     use crate::util::glob_dir;
     use crate::Error;
     use std::fs::create_dir_all;
@@ -272,13 +308,17 @@ pub mod tests {
         assert_eq!(expected, result);
     }
 
-    pub fn test_decode_insert_msgs() -> Result<(), Error> {
+    pub async fn test_decode_insert_msgs() -> Result<(), Error> {
+        let mut parser = NmeaParser::new();
         let fpaths = glob_dir(std::path::PathBuf::from("testdata/"), "nm4").expect("globbing");
         for filepath in fpaths {
-            let _ = decode_insert_msgs(
+            parser = decode_insert_msgs(
                 &std::path::Path::new("testdata/test.db").to_path_buf(),
                 &std::path::Path::new(&filepath).to_path_buf(),
-            );
+                parser,
+            )
+            .await
+            .expect("test decode and insert");
         }
 
         Ok(())

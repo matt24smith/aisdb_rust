@@ -21,8 +21,10 @@
 //!
 //! ```
 
-use futures::stream::iter;
-use futures::StreamExt;
+//use futures::stream::iter;
+//use futures::StreamExt;
+
+use nmea_parser::NmeaParser;
 
 #[path = "csvreader.rs"]
 pub mod csvreader;
@@ -71,18 +73,37 @@ pub async fn main() -> Result<(), Error> {
         path_arr.push((std::path::PathBuf::from(&args.dbpath), file));
     }
 
+    let mut parser = NmeaParser::new();
+    for (d, f) in &path_arr {
+        if f.to_str().unwrap().contains(&".nm4")
+            || f.to_str().unwrap().contains(&".NM4")
+            || f.to_str().unwrap().contains(&".RX")
+            || f.to_str().unwrap().contains(&".rx")
+        {
+            parser = decode_insert_msgs(&d, &f, parser)
+                .await
+                .expect("decoding NM4");
+        } else if f.to_str().unwrap().contains(&".csv") || f.to_str().unwrap().contains(&".CSV") {
+            decodemsgs_ee_csv(&d, &f).await.expect("decoding CSV");
+        } else {
+            panic!("unknown file extension {:?}", &d);
+        }
+    }
+
     // create a future for the database call
+    /*
     let mut insertfile = vec![];
     for (d, f) in path_arr {
         insertfile.push(async move {
             if f.to_str().unwrap().contains(&".nm4") || f.to_str().unwrap().contains(&".NM4") {
-                decode_insert_msgs(&d, &f).await.expect("decoding");
+                parser = decode_insert_msgs(&d, &f, parser).await.expect("decoding");
             } else {
                 decodemsgs_ee_csv(&d, &f).await.expect("decoding CSV");
             }
         });
     }
     let _results = futures::future::join_all(insertfile).await;
+    */
 
     /* PARALLEL ASYNC */
     /* does not work with sqlite */
@@ -92,6 +113,7 @@ pub async fn main() -> Result<(), Error> {
     //    .collect::<Vec<_>>();
     //let _results = futures::future::join_all(handles).await;
 
+    /*
     if args.rawdata_dir.is_some() {
         let mut fpaths: Vec<_> = std::fs::read_dir(&args.rawdata_dir.unwrap())
             .unwrap()
@@ -116,6 +138,7 @@ pub async fn main() -> Result<(), Error> {
             })
             .await;
     }
+    */
 
     Ok(())
 }
